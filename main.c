@@ -440,6 +440,54 @@ static int link_sta_handler(struct nl_msg *msg, void *arg)
   return NL_SKIP;
 }
 
+static int interface_survey_handler(struct nl_msg *msg, void *arg)
+{
+  struct nlattr *tb[NL80211_ATTR_MAX + 1];
+  struct genlmsghdr *gnlh = nlmsg_data(nlmsg_hdr(msg));
+  struct nlattr *sinfo[NL80211_SURVEY_INFO_MAX + 1];
+  char dev[20];
+
+  static struct nla_policy survey_policy[NL80211_SURVEY_INFO_MAX + 1] = {
+    [NL80211_SURVEY_INFO_FREQUENCY] = { .type = NLA_U32 },
+    [NL80211_SURVEY_INFO_NOISE] = { .type = NLA_U8 },
+  };
+
+  nla_parse(tb, NL80211_ATTR_MAX, genlmsg_attrdata(gnlh, 0),
+      genlmsg_attrlen(gnlh, 0), NULL);
+
+  if_indextoname(nla_get_u32(tb[NL80211_ATTR_IFINDEX]), dev);
+
+  if (!tb[NL80211_ATTR_SURVEY_INFO])
+    return NL_SKIP;
+
+  if (nla_parse_nested(sinfo, NL80211_SURVEY_INFO_MAX,
+           tb[NL80211_ATTR_SURVEY_INFO],
+           survey_policy)) {
+    return NL_SKIP;
+  }
+
+  if (!sinfo[NL80211_SURVEY_INFO_IN_USE])
+    return NL_SKIP;
+
+  if (sinfo[NL80211_SURVEY_INFO_NOISE])
+    printf("wireless.radios.%s.noise: %d\n", dev,
+      (int8_t) nla_get_u8(sinfo[NL80211_SURVEY_INFO_NOISE]));
+  if (sinfo[NL80211_SURVEY_INFO_CHANNEL_TIME])
+    printf("wireless.radios.%s.survey.time_active: %llu\n", dev,
+      (unsigned long long) nla_get_u64(sinfo[NL80211_SURVEY_INFO_CHANNEL_TIME]));
+  if (sinfo[NL80211_SURVEY_INFO_CHANNEL_TIME_BUSY])
+    printf("wireless.radios.%s.survey.time_busy: %llu\n", dev,
+      (unsigned long long)nla_get_u64(sinfo[NL80211_SURVEY_INFO_CHANNEL_TIME_BUSY]));
+  if (sinfo[NL80211_SURVEY_INFO_CHANNEL_TIME_RX])
+    printf("wireless.radios.%s.survey.time_rx: %llu\n", dev,
+      (unsigned long long)nla_get_u64(sinfo[NL80211_SURVEY_INFO_CHANNEL_TIME_RX]));
+  if (sinfo[NL80211_SURVEY_INFO_CHANNEL_TIME_TX])
+    printf("wireless.radios.%s.survey.time_tx: %llu\n", dev,
+      (unsigned long long)nla_get_u64(sinfo[NL80211_SURVEY_INFO_CHANNEL_TIME_TX]));
+  
+  return NL_SKIP;
+}
+
 static int request_info(struct nl80211_state *state, signed long long devidx, enum nl80211_commands cmd,
                         int nl_msg_flags, nl_recvmsg_msg_cb_t handler, void *arg,
                         msg_cb_t msg_setup)
@@ -533,6 +581,9 @@ int main(int argc, char **argv)
 
   // Obtain additional link information
   request_info(&nlstate, devidx, NL80211_CMD_GET_STATION, 0, link_sta_handler, &ctx, link_sta_msg_setup);
+
+  // Obtain channel survey information
+  request_info(&nlstate, devidx, NL80211_CMD_GET_SURVEY, NLM_F_DUMP, interface_survey_handler, &ctx, NULL);
 
   nl80211_cleanup(&nlstate);
 
