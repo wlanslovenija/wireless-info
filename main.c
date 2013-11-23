@@ -49,7 +49,9 @@ struct nl80211_state {
  */
 struct interface_context {
   bool found_essid;
+  int32_t phy_id;
   uint8_t bssid[8];
+  char dev[20];
 };
 
 /// Callback type for adding arguments to netlink commands
@@ -311,6 +313,9 @@ static int interface_info_handler(struct nl_msg *msg, void *arg)
   else
     return NL_SKIP;
 
+  memset(ctx->dev, 0, sizeof(ctx->dev));
+  strncpy(ctx->dev, iface_name, 19);
+
   if (tb_msg[NL80211_ATTR_MAC]) {
     char mac_addr[20];
     mac_addr_n2a(mac_addr, nla_data(tb_msg[NL80211_ATTR_MAC]));
@@ -327,8 +332,10 @@ static int interface_info_handler(struct nl_msg *msg, void *arg)
     enum nl80211_iftype iftype = nla_get_u32(tb_msg[NL80211_ATTR_IFTYPE]);
     printf("wireless.radios.%s.mode: %s\n", iface_name, iftype_name(iftype));
   }
-  if (tb_msg[NL80211_ATTR_WIPHY])
-    printf("wireless.radios.%s.phy: phy%d\n", iface_name,  nla_get_u32(tb_msg[NL80211_ATTR_WIPHY]));
+  if (tb_msg[NL80211_ATTR_WIPHY]) {
+    ctx->phy_id = nla_get_u32(tb_msg[NL80211_ATTR_WIPHY]);
+    printf("wireless.radios.%s.phy: phy%d\n", iface_name, ctx->phy_id);
+  }
 
   if (tb_msg[NL80211_ATTR_WIPHY_FREQ]) {
     uint32_t freq = nla_get_u32(tb_msg[NL80211_ATTR_WIPHY_FREQ]);
@@ -488,9 +495,40 @@ static int interface_survey_handler(struct nl_msg *msg, void *arg)
   return NL_SKIP;
 }
 
+static int interface_phy_handler(struct nl_msg *msg, void *arg)
+{
+  struct nlattr *tb[NL80211_ATTR_MAX + 1];
+  struct genlmsghdr *gnlh = nlmsg_data(nlmsg_hdr(msg));
+  struct interface_context *ctx = arg;
+
+  nla_parse(tb, NL80211_ATTR_MAX, genlmsg_attrdata(gnlh, 0),
+      genlmsg_attrlen(gnlh, 0), NULL);
+
+  if (tb[NL80211_ATTR_WIPHY_FRAG_THRESHOLD]) {
+    unsigned int frag;
+    frag = nla_get_u32(tb[NL80211_ATTR_WIPHY_FRAG_THRESHOLD]);
+    if (frag != (unsigned int)-1)
+      printf("wireless.radios.%s.frag_threshold: %d\n", ctx->dev, frag);
+    else
+      printf("wireless.radios.%s.frag_threshold: 0\n", ctx->dev);
+  }
+
+  if (tb[NL80211_ATTR_WIPHY_RTS_THRESHOLD]) {
+    unsigned int rts;
+
+    rts = nla_get_u32(tb[NL80211_ATTR_WIPHY_RTS_THRESHOLD]);
+    if (rts != (unsigned int)-1)
+      printf("wireless.radios.%s.rts_threshold: %d\n", ctx->dev, rts);
+    else
+      printf("wireless.radios.%s.rts_threshold: 0\n", ctx->dev);
+  }
+
+  return NL_SKIP;
+}
+
 static int request_info(struct nl80211_state *state, signed long long devidx, enum nl80211_commands cmd,
                         int nl_msg_flags, nl_recvmsg_msg_cb_t handler, void *arg,
-                        msg_cb_t msg_setup)
+                        msg_cb_t msg_setup, int phy)
 {
   int err;
   struct nl_cb *cb;
@@ -513,7 +551,10 @@ static int request_info(struct nl80211_state *state, signed long long devidx, en
 
   genlmsg_put(msg, 0, 0, state->nl80211_id, 0, nl_msg_flags, cmd, 0);
   
-  NLA_PUT_U32(msg, NL80211_ATTR_IFINDEX, devidx);
+  if (phy == 0)
+    NLA_PUT_U32(msg, NL80211_ATTR_IFINDEX, devidx);
+  else
+    NLA_PUT_U32(msg, NL80211_ATTR_WIPHY, devidx);
 
   if (msg_setup != NULL) {
     err = msg_setup(msg, arg);
@@ -574,16 +615,19 @@ int main(int argc, char **argv)
   ctx.found_essid = false;
 
   // Obtain general interface information
-  request_info(&nlstate, devidx, NL80211_CMD_GET_INTERFACE, 0, interface_info_handler, &ctx, NULL);
+  request_info(&nlstate, devidx, NL80211_CMD_GET_INTERFACE, 0, interface_info_handler, &ctx, NULL, 0);
 
   // Obtain link information (when connected to some ap or in ibss mode)
-  request_info(&nlstate, devidx, NL80211_CMD_GET_SCAN, NLM_F_DUMP, link_bss_handler, &ctx, NULL);
+  request_info(&nlstate, devidx, NL80211_CMD_GET_SCAN, NLM_F_DUMP, link_bss_handler, &ctx, NULL, 0);
 
   // Obtain additional link information
-  request_info(&nlstate, devidx, NL80211_CMD_GET_STATION, 0, link_sta_handler, &ctx, link_sta_msg_setup);
+  request_info(&nlstate, devidx, NL80211_CMD_GET_STATION, 0, link_sta_handler, &ctx, link_sta_msg_setup, 0);
 
   // Obtain channel survey information
-  request_info(&nlstate, devidx, NL80211_CMD_GET_SURVEY, NLM_F_DUMP, interface_survey_handler, &ctx, NULL);
+  request_info(&nlstate, devidx, NL80211_CMD_GET_SURVEY, NLM_F_DUMP, interface_survey_handler, &ctx, NULL, 0);
+
+  // Obtain phy information
+  request_info(&nlstate, ctx.phy_id, NL80211_CMD_GET_WIPHY, 0, interface_phy_handler, &ctx, NULL, 1);
 
   nl80211_cleanup(&nlstate);
 
