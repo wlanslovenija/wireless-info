@@ -1,11 +1,8 @@
 
 /* libnl 1.x compatibility code */
-#if !defined(CONFIG_LIBNL20) && !defined(CONFIG_LIBNL30)
-#  define nl_sock nl_handle
-#endif
+#if !defined(CONFIG_LIBNL20) && !defined(CONFIG_LIBNL30) && !defined(LIBNL_TINY)
+#define nl_sock nl_handle
 
-/* libnl 1.x compatibility code */
-#if !defined(CONFIG_LIBNL20) && !defined(CONFIG_LIBNL30)
 static inline struct nl_handle *nl_socket_alloc(void)
 {
   return nl_handle_alloc();
