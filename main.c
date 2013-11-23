@@ -45,11 +45,11 @@ struct nl80211_state {
 };
 
 /**
- * Structure for describing state of a link.
+ * Bookkeeping for an interface that is being queried.
  */
-struct link_result {
+struct interface_context {
+  bool found_essid;
   uint8_t bssid[8];
-  bool link_found;
 };
 
 /// Callback type for adding arguments to netlink commands
@@ -253,7 +253,7 @@ static int link_bss_handler(struct nl_msg *msg, void *arg)
     [NL80211_BSS_SIGNAL_UNSPEC] = { .type = NLA_U8 },
     [NL80211_BSS_STATUS] = { .type = NLA_U32 },
   };
-  struct link_result *result = arg;
+  struct interface_context *ctx = arg;
   char mac_addr[20], dev[20];
 
   nla_parse(tb, NL80211_ATTR_MAX, genlmsg_attrdata(gnlh, 0), genlmsg_attrlen(gnlh, 0), NULL);
@@ -273,8 +273,7 @@ static int link_bss_handler(struct nl_msg *msg, void *arg)
   if_indextoname(nla_get_u32(tb[NL80211_ATTR_IFINDEX]), dev);
 
   printf("wireless.radios.%s.bssid: %s\n", dev, mac_addr);
-  result->link_found = true;
-  memcpy(result->bssid, nla_data(bss[NL80211_BSS_BSSID]), 6);
+  memcpy(ctx->bssid, nla_data(bss[NL80211_BSS_BSSID]), 6);
 
   if (bss[NL80211_BSS_INFORMATION_ELEMENTS]) {
     unsigned char *ie = nla_data(bss[NL80211_BSS_INFORMATION_ELEMENTS]);
@@ -283,7 +282,7 @@ static int link_bss_handler(struct nl_msg *msg, void *arg)
       // ie[0] is type
       // ie[1] is length
       // ie[2..] is data
-      if (ie[0] == 0) {
+      if (ie[0] == 0 && !ctx->found_essid) {
         // SSID
         printf("wireless.radios.%s.essid: ", dev);
         print_ssid_escaped(ie[1], ie + 2);
@@ -302,6 +301,7 @@ static int interface_info_handler(struct nl_msg *msg, void *arg)
 {
   struct genlmsghdr *gnlh = nlmsg_data(nlmsg_hdr(msg));
   struct nlattr *tb_msg[NL80211_ATTR_MAX + 1];
+  struct interface_context *ctx = arg;
   char *iface_name;
 
   nla_parse(tb_msg, NL80211_ATTR_MAX, genlmsg_attrdata(gnlh, 0), genlmsg_attrlen(gnlh, 0), NULL);
@@ -321,6 +321,7 @@ static int interface_info_handler(struct nl_msg *msg, void *arg)
     print_ssid_escaped(nla_len(tb_msg[NL80211_ATTR_SSID]),
            nla_data(tb_msg[NL80211_ATTR_SSID]));
     printf("\n");
+    ctx->found_essid = true;
   }
   if (tb_msg[NL80211_ATTR_IFTYPE]) {
     enum nl80211_iftype iftype = nla_get_u32(tb_msg[NL80211_ATTR_IFTYPE]);
@@ -352,8 +353,8 @@ static int interface_info_handler(struct nl_msg *msg, void *arg)
 
 int link_sta_msg_setup(struct nl_msg *msg, void *arg)
 {
-  struct link_result *result = arg;
-  NLA_PUT(msg, NL80211_ATTR_MAC, ETH_ALEN, result->bssid);
+  struct interface_context *ctx = arg;
+  NLA_PUT(msg, NL80211_ATTR_MAC, ETH_ALEN, ctx->bssid);
   return 0;
 nla_put_failure:
   return -ENOBUFS;
@@ -521,16 +522,17 @@ int main(int argc, char **argv)
   if (err)
     return 1;
 
+  struct interface_context ctx;
+  ctx.found_essid = false;
+
   // Obtain general interface information
-  request_info(&nlstate, devidx, NL80211_CMD_GET_INTERFACE, 0, interface_info_handler, NULL, NULL);
+  request_info(&nlstate, devidx, NL80211_CMD_GET_INTERFACE, 0, interface_info_handler, &ctx, NULL);
 
   // Obtain link information (when connected to some ap or in ibss mode)
-  struct link_result lr;
-  lr.link_found = false;
-  request_info(&nlstate, devidx, NL80211_CMD_GET_SCAN, NLM_F_DUMP, link_bss_handler, &lr, NULL);
+  request_info(&nlstate, devidx, NL80211_CMD_GET_SCAN, NLM_F_DUMP, link_bss_handler, &ctx, NULL);
 
   // Obtain additional link information
-  request_info(&nlstate, devidx, NL80211_CMD_GET_STATION, 0, link_sta_handler, &lr, link_sta_msg_setup);
+  request_info(&nlstate, devidx, NL80211_CMD_GET_STATION, 0, link_sta_handler, &ctx, link_sta_msg_setup);
 
   nl80211_cleanup(&nlstate);
 
