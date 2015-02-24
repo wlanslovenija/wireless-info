@@ -1,13 +1,5 @@
-Source Code, Issue Tracker and Mailing List
--------------------------------------------
+.. warning::
+   The project was abandoned in favor of `nodewatcher-agent`_ which is a modular monitoring agent, implementing the wireless reporting functionalities as a module.
 
-For development *wlan slovenija* open wireless network `development Trac`_ is
-used, so you can see `existing open tickets`_ or `open a new one`_ there. Source
-code is available on GitHub_. If you have any questions or if you want to
-discuss the project, use `development mailing list`_.
+.. _nodewatcher-agent: https://github.com/wlanslovenija/nodewatcher-agent
 
-.. _development Trac: https://dev.wlan-si.net/
-.. _existing open tickets: https://dev.wlan-si.net/report
-.. _open a new one: https://dev.wlan-si.net/newticket
-.. _GitHub: https://github.com/wlanslovenija/wireless-info
-.. _development mailing list: https://wlan-si.net/lists/info/development
